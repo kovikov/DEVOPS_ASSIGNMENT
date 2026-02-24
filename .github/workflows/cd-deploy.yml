@@ -137,8 +137,21 @@ jobs:
           fi
 
           mkdir -p ~/.ssh
-          printf "%s" "${{ secrets.EC2_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key.pem
+          KEY_CONTENT="${{ secrets.EC2_SSH_KEY }}"
+
+          # Support secrets pasted either as true multiline PEM or as one line with literal \n
+          if [[ "$KEY_CONTENT" == *"\\n"* ]]; then
+            KEY_CONTENT=$(printf '%b' "$KEY_CONTENT")
+          fi
+
+          printf "%s\n" "$KEY_CONTENT" | tr -d '\r' > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
+
+          if ! ssh-keygen -y -f ~/.ssh/deploy_key.pem >/dev/null 2>&1; then
+            echo "::error::EC2_SSH_KEY is not a valid private key format. Paste the full .pem content (BEGIN/END lines included), or use proper escaped \\n format."
+            exit 1
+          fi
+
           echo "StrictHostKeyChecking no" >> ~/.ssh/config
           echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
           chmod 600 ~/.ssh/config
