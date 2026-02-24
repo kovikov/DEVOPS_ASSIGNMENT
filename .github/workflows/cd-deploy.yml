@@ -8,6 +8,7 @@ on:
       - completed
     branches:
       - main
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -29,6 +30,15 @@ jobs:
           aws-region: ${{ secrets.AWS_REGION }}
 
       # ──────────────────────────────────────────────────────
+      # STEP 1.5: Verify AWS authentication context
+      # ──────────────────────────────────────────────────────
+      - name: Verify AWS identity
+        shell: bash
+        run: |
+          set -e
+          aws sts get-caller-identity
+
+      # ──────────────────────────────────────────────────────
       # STEP 2: Fetch EC2 instance IPs using AWS CLI and tags
       # This is the KEY difference from the original - no hardcoded IPs!
       # Query running instances tagged with Environment=production
@@ -38,23 +48,30 @@ jobs:
         id: get_instances
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           # Query EC2 instances with specific tags
           # Adjust the filter to match your EC2 instances' tags
           # Example: Name=tag:Environment,Values=production
-          INSTANCES=$(aws ec2 describe-instances \
+          PUBLIC_INSTANCES=$(aws ec2 describe-instances \
             --filters "Name=tag:${{ secrets.EC2_TAG_KEY }},Values=${{ secrets.EC2_TAG_VALUE }}" \
                       "Name=instance-state-name,Values=running" \
             --query 'Reservations[*].Instances[*].PublicIpAddress' \
             --output text)
 
+          PRIVATE_INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:${{ secrets.EC2_TAG_KEY }},Values=${{ secrets.EC2_TAG_VALUE }}" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].PrivateIpAddress' \
+            --output text)
+
           # Normalize tabs/newlines to a clean, single-line space-separated list
-          INSTANCES=$(echo "$INSTANCES" | tr '\t\n' ' ' | xargs || true)
+          PUBLIC_INSTANCES=$(echo "$PUBLIC_INSTANCES" | tr '\t\n' ' ' | xargs || true)
+          PRIVATE_INSTANCES=$(echo "$PRIVATE_INSTANCES" | tr '\t\n' ' ' | xargs || true)
 
           # Convert space-separated IPs into an array (skip empty values)
           IP_ARRAY=()
-          for ip in $INSTANCES; do
+          for ip in $PUBLIC_INSTANCES; do
             if [ -n "$ip" ]; then
               IP_ARRAY+=("$ip")
             fi
@@ -66,12 +83,19 @@ jobs:
           done
 
           # Store IPs for use in later steps
-          echo "instance_ips=${INSTANCES}" >> "$GITHUB_OUTPUT"
+          echo "instance_ips=${PUBLIC_INSTANCES}" >> "$GITHUB_OUTPUT"
           echo "instance_count=${#IP_ARRAY[@]}" >> $GITHUB_OUTPUT
 
           # Validate we found instances
           if [ ${#IP_ARRAY[@]} -eq 0 ]; then
-            echo "❌ No instances found with the specified tags!"
+            if [ -n "$PRIVATE_INSTANCES" ]; then
+              echo "❌ Tagged running instances were found, but they have no PUBLIC IPs."
+              echo "Private IPs found: $PRIVATE_INSTANCES"
+              echo "Use public EC2/EIP for SSH from GitHub Actions, or switch deployment to SSM/self-hosted runner."
+              exit 1
+            fi
+
+            echo "❌ No running instances found with the specified tags!"
             echo "Tag Key: ${{ secrets.EC2_TAG_KEY }}"
             echo "Tag Value: ${{ secrets.EC2_TAG_VALUE }}"
             exit 1
@@ -83,7 +107,7 @@ jobs:
       - name: Set up SSH key
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key.pem
@@ -99,7 +123,7 @@ jobs:
       - name: Preflight connectivity checks
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
@@ -141,7 +165,7 @@ jobs:
       - name: Deploy to all EC2 instances
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           # Get the IPs from the previous step
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
@@ -210,7 +234,7 @@ jobs:
       - name: Health check all instances
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
@@ -261,7 +285,7 @@ jobs:
       - name: Verify deployments
         shell: bash
         run: |
-          set -Eeuo pipefail
+          set -e
 
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
