@@ -35,12 +35,15 @@ jobs:
           set -Eeuo pipefail
 
           missing=0
-          for name in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_REGION EC2_SSH_KEY EC2_USER EC2_TAG_KEY EC2_TAG_VALUE DOCKERHUB_USERNAME; do
-            if [ -z "${!name:-}" ]; then
-              echo "❌ Missing required secret: $name"
-              missing=1
-            fi
-          done
+
+          if [ -z "${AWS_ACCESS_KEY_ID}" ]; then echo "❌ Missing required secret: AWS_ACCESS_KEY_ID"; missing=1; fi
+          if [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then echo "❌ Missing required secret: AWS_SECRET_ACCESS_KEY"; missing=1; fi
+          if [ -z "${AWS_REGION}" ]; then echo "❌ Missing required secret: AWS_REGION"; missing=1; fi
+          if [ -z "${EC2_SSH_KEY}" ]; then echo "❌ Missing required secret: EC2_SSH_KEY"; missing=1; fi
+          if [ -z "${EC2_USER}" ]; then echo "❌ Missing required secret: EC2_USER"; missing=1; fi
+          if [ -z "${EC2_TAG_KEY}" ]; then echo "❌ Missing required secret: EC2_TAG_KEY"; missing=1; fi
+          if [ -z "${EC2_TAG_VALUE}" ]; then echo "❌ Missing required secret: EC2_TAG_VALUE"; missing=1; fi
+          if [ -z "${DOCKERHUB_USERNAME}" ]; then echo "❌ Missing required secret: DOCKERHUB_USERNAME"; missing=1; fi
 
           if [ "$missing" -ne 0 ]; then
             exit 1
