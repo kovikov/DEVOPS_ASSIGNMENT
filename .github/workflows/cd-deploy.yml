@@ -63,37 +63,23 @@ jobs:
 
           TARGET_INSTANCE_ID="${{ secrets.EC2_INSTANCE_ID }}"
 
-          if [ -n "$TARGET_INSTANCE_ID" ]; then
-            echo "Using fixed instance override via EC2_INSTANCE_ID"
-            PUBLIC_INSTANCES=$(aws ec2 describe-instances \
-              --instance-ids "$TARGET_INSTANCE_ID" \
-              --filters "Name=instance-state-name,Values=running" \
-              --query 'Reservations[*].Instances[*].PublicIpAddress' \
-              --output text)
-
-            PRIVATE_INSTANCES=$(aws ec2 describe-instances \
-              --instance-ids "$TARGET_INSTANCE_ID" \
-              --filters "Name=instance-state-name,Values=running" \
-              --query 'Reservations[*].Instances[*].PrivateIpAddress' \
-              --output text)
-          else
-            echo "Using tag-based instance discovery"
-
-            # Query EC2 instances with specific tags
-            # Adjust the filter to match your EC2 instances' tags
-            # Example: Name=tag:Environment,Values=production
-            PUBLIC_INSTANCES=$(aws ec2 describe-instances \
-              --filters "Name=tag:${{ secrets.EC2_TAG_KEY }},Values=${{ secrets.EC2_TAG_VALUE }}" \
-                        "Name=instance-state-name,Values=running" \
-              --query 'Reservations[*].Instances[*].PublicIpAddress' \
-              --output text)
-
-            PRIVATE_INSTANCES=$(aws ec2 describe-instances \
-              --filters "Name=tag:${{ secrets.EC2_TAG_KEY }},Values=${{ secrets.EC2_TAG_VALUE }}" \
-                        "Name=instance-state-name,Values=running" \
-              --query 'Reservations[*].Instances[*].PrivateIpAddress' \
-              --output text)
+          if [ -z "$TARGET_INSTANCE_ID" ]; then
+            echo "::error::Missing required secret EC2_INSTANCE_ID. Add a running EC2 instance ID (example: i-0123456789abcdef0)."
+            exit 1
           fi
+
+          echo "Using fixed instance override via EC2_INSTANCE_ID"
+          PUBLIC_INSTANCES=$(aws ec2 describe-instances \
+            --instance-ids "$TARGET_INSTANCE_ID" \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].PublicIpAddress' \
+            --output text)
+
+          PRIVATE_INSTANCES=$(aws ec2 describe-instances \
+            --instance-ids "$TARGET_INSTANCE_ID" \
+            --filters "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].PrivateIpAddress' \
+            --output text)
 
           # Normalize tabs/newlines to a clean, single-line space-separated list
           PUBLIC_INSTANCES=$(echo "$PUBLIC_INSTANCES" | tr '\t\n' ' ' | xargs || true)
@@ -118,24 +104,16 @@ jobs:
 
           # Validate we found instances
           if [ ${#IP_ARRAY[@]} -eq 0 ]; then
-            if [ -n "$TARGET_INSTANCE_ID" ]; then
-              echo "❌ EC2_INSTANCE_ID is set but no running instance was found for that ID."
-              echo "::error::No running instance found for EC2_INSTANCE_ID=$TARGET_INSTANCE_ID in region ${{ secrets.AWS_REGION }}."
-              exit 1
-            fi
-
             if [ -n "$PRIVATE_INSTANCES" ]; then
-              echo "❌ Tagged running instances were found, but they have no PUBLIC IPs."
+              echo "❌ Running instance was found, but it has no PUBLIC IP."
               echo "Private IPs found: $PRIVATE_INSTANCES"
               echo "Use public EC2/EIP for SSH from GitHub Actions, or switch deployment to SSM/self-hosted runner."
-              echo "::error::Tagged instances found but no public IPs. GitHub-hosted runner cannot SSH to private-only instances."
+              echo "::error::Target instance has no public IP. GitHub-hosted runner cannot SSH to private-only instances."
               exit 1
             fi
 
-            echo "❌ No running instances found with the specified tags!"
-            echo "Tag Key: ${{ secrets.EC2_TAG_KEY }}"
-            echo "Tag Value: ${{ secrets.EC2_TAG_VALUE }}"
-            echo "::error::No running EC2 instances match tag ${{ secrets.EC2_TAG_KEY }}=${{ secrets.EC2_TAG_VALUE }} in region ${{ secrets.AWS_REGION }}."
+            echo "❌ EC2_INSTANCE_ID is set but no running instance was found for that ID."
+            echo "::error::No running instance found for EC2_INSTANCE_ID=$TARGET_INSTANCE_ID in region ${{ secrets.AWS_REGION }}."
             exit 1
           fi
 
