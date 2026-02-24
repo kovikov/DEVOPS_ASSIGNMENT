@@ -36,7 +36,10 @@ jobs:
         shell: bash
         run: |
           set -e
-          aws sts get-caller-identity
+          if ! aws sts get-caller-identity; then
+            echo "::error::AWS authentication failed. Check AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION, and IAM user status."
+            exit 1
+          fi
 
       # ──────────────────────────────────────────────────────
       # STEP 2: Fetch EC2 instance IPs using AWS CLI and tags
@@ -92,12 +95,14 @@ jobs:
               echo "❌ Tagged running instances were found, but they have no PUBLIC IPs."
               echo "Private IPs found: $PRIVATE_INSTANCES"
               echo "Use public EC2/EIP for SSH from GitHub Actions, or switch deployment to SSM/self-hosted runner."
+              echo "::error::Tagged instances found but no public IPs. GitHub-hosted runner cannot SSH to private-only instances."
               exit 1
             fi
 
             echo "❌ No running instances found with the specified tags!"
             echo "Tag Key: ${{ secrets.EC2_TAG_KEY }}"
             echo "Tag Value: ${{ secrets.EC2_TAG_VALUE }}"
+            echo "::error::No running EC2 instances match tag ${{ secrets.EC2_TAG_KEY }}=${{ secrets.EC2_TAG_VALUE }} in region ${{ secrets.AWS_REGION }}."
             exit 1
           fi
 
@@ -155,6 +160,7 @@ jobs:
 
           echo "Preflight summary: $READY ready, $FAILED failed"
           if [ $FAILED -gt 0 ]; then
+            echo "::error::SSH/Docker preflight failed on one or more instances. Check EC2_USER, EC2_SSH_KEY, SG port 22, and Docker service."
             exit 1
           fi
 
@@ -224,6 +230,7 @@ jobs:
 
           # Fail if any deployments failed
           if [ $FAILED -gt 0 ]; then
+            echo "::error::Deployment command failed on one or more instances. Check remote Docker logs and permissions."
             exit 1
           fi
 
@@ -275,6 +282,7 @@ jobs:
           echo "Health Check Summary: $HEALTHY healthy, $UNHEALTHY unhealthy"
 
           if [ $UNHEALTHY -gt 0 ]; then
+            echo "::error::Health check failed. Ensure SG allows port 80 and app responds on /health with HTTP 200."
             exit 1
           fi
 
