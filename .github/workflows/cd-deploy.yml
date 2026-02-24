@@ -1,0 +1,222 @@
+name: CD - Deploy to EC2 using AWS CLI
+
+# Trigger this workflow after the CI workflow succeeds
+on:
+  workflow_run:
+    workflows: ["CI - Build and Push Docker Image"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    # Only deploy if the CI workflow actually succeeded
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      # ──────────────────────────────────────────────────────
+      # STEP 1: Configure AWS CLI credentials
+      # This allows us to query EC2 instances without hardcoding IPs
+      # ──────────────────────────────────────────────────────
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      # ──────────────────────────────────────────────────────
+      # STEP 2: Fetch EC2 instance IPs using AWS CLI and tags
+      # This is the KEY difference from the original - no hardcoded IPs!
+      # Query running instances tagged with Environment=production
+      # and get their public IPs
+      # ──────────────────────────────────────────────────────
+      - name: Get EC2 instances using AWS CLI
+        id: get_instances
+        run: |
+          # Query EC2 instances with specific tags
+          # Adjust the filter to match your EC2 instances' tags
+          # Example: Name=tag:Environment,Values=production
+          INSTANCES=$(aws ec2 describe-instances \
+            --filters "Name=tag:${{ secrets.EC2_TAG_KEY }},Values=${{ secrets.EC2_TAG_VALUE }}" \
+                      "Name=instance-state-name,Values=running" \
+            --query 'Reservations[*].Instances[*].PublicIpAddress' \
+            --output text)
+
+          # Convert space-separated IPs into an array
+          mapfile -t IP_ARRAY <<< "$(echo "$INSTANCES" | tr ' ' '\n')"
+
+          echo "Found ${#IP_ARRAY[@]} instances with tags:"
+          for ip in "${IP_ARRAY[@]}"; do
+            echo "  - $ip"
+          done
+
+          # Store IPs for use in later steps
+          echo "instance_ips=${INSTANCES}" >> $GITHUB_OUTPUT
+          echo "instance_count=${#IP_ARRAY[@]}" >> $GITHUB_OUTPUT
+
+          # Validate we found instances
+          if [ ${#IP_ARRAY[@]} -eq 0 ]; then
+            echo "❌ No instances found with the specified tags!"
+            echo "Tag Key: ${{ secrets.EC2_TAG_KEY }}"
+            echo "Tag Value: ${{ secrets.EC2_TAG_VALUE }}"
+            exit 1
+          fi
+
+      # ──────────────────────────────────────────────────────
+      # STEP 3: Set up SSH key from GitHub Secrets
+      # ──────────────────────────────────────────────────────
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key.pem
+          chmod 600 ~/.ssh/deploy_key.pem
+          echo "StrictHostKeyChecking no" >> ~/.ssh/config
+          echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      # ──────────────────────────────────────────────────────
+      # STEP 4: Deploy to all discovered instances
+      # Dynamically iterate through all instances found by AWS CLI
+      # ──────────────────────────────────────────────────────
+      - name: Deploy to all EC2 instances
+        run: |
+          # Get the IPs from the previous step
+          INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
+          
+          # Convert to array
+          mapfile -t IP_ARRAY <<< "$(echo "$INSTANCES" | tr ' ' '\n')"
+
+          # Counter for tracking deployments
+          DEPLOYED=0
+          FAILED=0
+
+          # Deploy to each instance
+          for EC2_IP in "${IP_ARRAY[@]}"; do
+            if [ -z "$EC2_IP" ]; then
+              continue
+            fi
+
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            echo "Deploying to: $EC2_IP"
+            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+            # SSH into instance and deploy
+            if ssh -T -i ~/.ssh/deploy_key.pem \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              ${{ secrets.EC2_USER }}@$EC2_IP << 'DEPLOY_EOF'
+
+              # Pull the latest image from DockerHub
+              sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/load-balancer-app:latest
+
+              # Stop and remove the old container
+              sudo docker stop load-balancer-app || true
+              sudo docker rm load-balancer-app || true
+
+              # Run the new container
+              sudo docker run --name load-balancer-app -d -p 80:80 \
+                ${{ secrets.DOCKERHUB_USERNAME }}/load-balancer-app:latest
+
+              echo "✅ Container started on $EC2_IP"
+            DEPLOY_EOF
+            then
+              ((DEPLOYED++))
+            else
+              ((FAILED++))
+              echo "❌ Deployment failed for $EC2_IP"
+            fi
+
+            # Wait before next deployment
+            sleep 5
+          done
+
+          # Print summary
+          echo ""
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Deployment Summary"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "✅ Successful: $DEPLOYED"
+          echo "❌ Failed: $FAILED"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          # Fail if any deployments failed
+          if [ $FAILED -gt 0 ]; then
+            exit 1
+          fi
+
+      # ──────────────────────────────────────────────────────
+      # STEP 5: Health check all deployed instances
+      # Verify that the application is running on each server
+      # ──────────────────────────────────────────────────────
+      - name: Health check all instances
+        run: |
+          INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
+          mapfile -t IP_ARRAY <<< "$(echo "$INSTANCES" | tr ' ' '\n')"
+
+          HEALTHY=0
+          UNHEALTHY=0
+
+          for EC2_IP in "${IP_ARRAY[@]}"; do
+            if [ -z "$EC2_IP" ]; then
+              continue
+            fi
+
+            echo "Health checking: $EC2_IP"
+
+            # Wait for container to start
+            sleep 15
+
+            # Perform health check
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+              --max-time 5 \
+              http://$EC2_IP/health)
+
+            if [ "$STATUS" = "200" ]; then
+              echo "✅ $EC2_IP is healthy (Status: $STATUS)"
+              ((HEALTHY++))
+            else
+              echo "❌ $EC2_IP health check failed (Status: $STATUS)"
+              ((UNHEALTHY++))
+            fi
+          done
+
+          echo ""
+          echo "Health Check Summary: $HEALTHY healthy, $UNHEALTHY unhealthy"
+
+          if [ $UNHEALTHY -gt 0 ]; then
+            exit 1
+          fi
+
+      # ──────────────────────────────────────────────────────
+      # STEP 6: Post-deployment verification
+      # Retrieve application info from all instances
+      # ──────────────────────────────────────────────────────
+      - name: Verify deployments
+        run: |
+          INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
+          mapfile -t IP_ARRAY <<< "$(echo "$INSTANCES" | tr ' ' '\n')"
+
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+          echo "Deployment Verification"
+          echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+          for EC2_IP in "${IP_ARRAY[@]}"; do
+            if [ -z "$EC2_IP" ]; then
+              continue
+            fi
+
+            echo ""
+            echo "Server: $EC2_IP"
+            echo "---"
+            curl -s http://$EC2_IP/ | jq '.' 2>/dev/null || \
+              curl -s http://$EC2_IP/
+
+            echo ""
+          done
+
+          echo ""
+          echo "✅ All deployments complete!"
