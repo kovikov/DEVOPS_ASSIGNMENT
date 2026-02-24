@@ -137,7 +137,7 @@ jobs:
           fi
 
           mkdir -p ~/.ssh
-          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key.pem
+          printf "%s" "${{ secrets.EC2_SSH_KEY }}" | tr -d '\r' > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
           echo "StrictHostKeyChecking no" >> ~/.ssh/config
           echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
