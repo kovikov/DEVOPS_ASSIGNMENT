@@ -138,13 +138,20 @@ jobs:
 
           mkdir -p ~/.ssh
           KEY_CONTENT="${{ secrets.EC2_SSH_KEY }}"
+          KEY_CONTENT_B64="${{ secrets.EC2_SSH_KEY_B64 }}"
 
-          # Support secrets pasted either as true multiline PEM or as one line with literal \n
-          if [[ "$KEY_CONTENT" == *"\\n"* ]]; then
-            KEY_CONTENT=$(printf '%b' "$KEY_CONTENT")
+          if [ -n "$KEY_CONTENT_B64" ]; then
+            echo "Using EC2_SSH_KEY_B64 secret"
+            printf "%s" "$KEY_CONTENT_B64" | tr -d '\r\n ' | base64 -d > ~/.ssh/deploy_key.pem
+          else
+            # Support secrets pasted either as true multiline PEM or as one line with literal \n
+            if [[ "$KEY_CONTENT" == *"\\n"* ]]; then
+              KEY_CONTENT=$(printf '%b' "$KEY_CONTENT")
+            fi
+
+            printf "%s\n" "$KEY_CONTENT" | tr -d '\r' > ~/.ssh/deploy_key.pem
           fi
 
-          printf "%s\n" "$KEY_CONTENT" | tr -d '\r' > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
 
           if ! ssh-keygen -y -f ~/.ssh/deploy_key.pem >/dev/null 2>&1; then
