@@ -137,25 +137,23 @@ jobs:
           fi
 
           mkdir -p ~/.ssh
-          KEY_CONTENT="${{ secrets.EC2_SSH_KEY }}"
           KEY_CONTENT_B64="${{ secrets.EC2_SSH_KEY_B64 }}"
 
-          if [ -n "$KEY_CONTENT_B64" ]; then
-            echo "Using EC2_SSH_KEY_B64 secret"
-            printf "%s" "$KEY_CONTENT_B64" | tr -d '\r\n ' | base64 -d > ~/.ssh/deploy_key.pem
-          else
-            # Support secrets pasted either as true multiline PEM or as one line with literal \n
-            if [[ "$KEY_CONTENT" == *"\\n"* ]]; then
-              KEY_CONTENT=$(printf '%b' "$KEY_CONTENT")
-            fi
+          if [ -z "$KEY_CONTENT_B64" ]; then
+            echo "::error::Missing required secret EC2_SSH_KEY_B64. Add base64 of your my-devops-key.pem file."
+            exit 1
+          fi
 
-            printf "%s\n" "$KEY_CONTENT" | tr -d '\r' > ~/.ssh/deploy_key.pem
+          echo "Using EC2_SSH_KEY_B64 secret"
+          if ! printf "%s" "$KEY_CONTENT_B64" | tr -d '\r\n ' | base64 -d > ~/.ssh/deploy_key.pem; then
+            echo "::error::EC2_SSH_KEY_B64 is not valid base64. Regenerate it from the .pem file and paste again."
+            exit 1
           fi
 
           chmod 600 ~/.ssh/deploy_key.pem
 
           if ! ssh-keygen -y -f ~/.ssh/deploy_key.pem >/dev/null 2>&1; then
-            echo "::error::EC2_SSH_KEY is not a valid private key format. Paste the full .pem content (BEGIN/END lines included), or use proper escaped \\n format."
+            echo "::error::Decoded EC2_SSH_KEY_B64 is not a valid private key. Ensure you base64-encoded the exact my-devops-key.pem file."
             exit 1
           fi
 
