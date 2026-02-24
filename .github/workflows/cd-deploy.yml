@@ -297,6 +297,12 @@ jobs:
         run: |
           set -e
 
+          EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+          if [ -z "$EC2_USER_VALUE" ]; then
+            EC2_USER_VALUE="ec2-user"
+            echo "::warning::EC2_USER secret missing; defaulting to ec2-user."
+          fi
+
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
           for ip in $INSTANCES; do
@@ -318,10 +324,14 @@ jobs:
             # Wait for container to start
             sleep 15
 
-            # Perform health check
-            STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
-              --max-time 5 \
-              http://$EC2_IP/health || true)
+            TARGET_HOST="${EC2_USER_VALUE}@${EC2_IP}"
+
+            # Perform health check from inside the instance via SSH
+            STATUS=$(ssh -T -i ~/.ssh/deploy_key.pem \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              "$TARGET_HOST" \
+              "curl -sS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost/health || true")
 
             if [ "$STATUS" = "200" ]; then
               echo "✅ $EC2_IP is healthy (Status: $STATUS)"
