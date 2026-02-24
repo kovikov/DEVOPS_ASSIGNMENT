@@ -13,21 +13,29 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: ${{ secrets.AWS_REGION }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
 
     # Only deploy if the CI workflow actually succeeded
     if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       # ──────────────────────────────────────────────────────
-      # STEP 1: Configure AWS CLI credentials
-      # This allows us to query EC2 instances without hardcoding IPs
+      # STEP 1: Verify required runtime environment
       # ──────────────────────────────────────────────────────
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Verify runtime prerequisites
+        shell: bash
+        run: |
+          set -e
+          command -v aws >/dev/null || { echo "::error::AWS CLI not found on runner."; exit 1; }
+          aws --version
+          if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ] || [ -z "${AWS_REGION}" ]; then
+            echo "::error::Missing one or more AWS secrets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION"
+            exit 1
+          fi
 
       # ──────────────────────────────────────────────────────
       # STEP 1.5: Verify AWS authentication context
