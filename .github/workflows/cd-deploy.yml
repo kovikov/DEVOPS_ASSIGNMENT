@@ -127,8 +127,8 @@ jobs:
 
           EC2_USER_VALUE="${{ secrets.EC2_USER }}"
           if [ -z "$EC2_USER_VALUE" ]; then
-            echo "::error::Missing required secret EC2_USER (expected value like ec2-user or ubuntu)."
-            exit 1
+            EC2_USER_VALUE="ec2-user"
+            echo "::warning::EC2_USER secret missing; defaulting to ec2-user."
           fi
 
           if ! [[ "$EC2_USER_VALUE" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
@@ -153,6 +153,10 @@ jobs:
           set -e
 
           EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+          if [ -z "$EC2_USER_VALUE" ]; then
+            EC2_USER_VALUE="ec2-user"
+            echo "::warning::EC2_USER secret missing; defaulting to ec2-user."
+          fi
 
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
@@ -199,6 +203,10 @@ jobs:
           set -e
 
           EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+          if [ -z "$EC2_USER_VALUE" ]; then
+            EC2_USER_VALUE="ec2-user"
+            echo "::warning::EC2_USER secret missing; defaulting to ec2-user."
+          fi
 
           # Get the IPs from the previous step
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
