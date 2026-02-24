@@ -7,7 +7,7 @@
 - Tutor: [Tutor name]
 - Submission Date: [DD/MM/YYYY]
 - Repository URL: https://github.com/kovikov/DEVOPS_ASSIGNMENT.git
-- Final Commit Hash: 8904f92ef13e35053e05b3e2adb66ff74b5b42fa
+- Final Commit Hash: e6b7928
 
 ---
 
