@@ -125,6 +125,17 @@ jobs:
         run: |
           set -e
 
+          EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+          if [ -z "$EC2_USER_VALUE" ]; then
+            echo "::error::Missing required secret EC2_USER (expected value like ec2-user or ubuntu)."
+            exit 1
+          fi
+
+          if ! [[ "$EC2_USER_VALUE" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+            echo "::error::EC2_USER appears invalid. Use a Linux username only (for example: ec2-user or ubuntu)."
+            exit 1
+          fi
+
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key.pem
           chmod 600 ~/.ssh/deploy_key.pem
@@ -141,6 +152,8 @@ jobs:
         run: |
           set -e
 
+          EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
           for ip in $INSTANCES; do
@@ -154,11 +167,12 @@ jobs:
 
           for EC2_IP in "${IP_ARRAY[@]}"; do
             echo "Preflight checking: $EC2_IP"
+            TARGET_HOST="${EC2_USER_VALUE}@${EC2_IP}"
 
             if ssh -T -i ~/.ssh/deploy_key.pem \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=10 \
-              ${{ secrets.EC2_USER }}@$EC2_IP \
+              "$TARGET_HOST" \
               "command -v docker >/dev/null && sudo docker --version >/dev/null"
             then
               echo "✅ SSH and Docker OK on $EC2_IP"
@@ -184,6 +198,8 @@ jobs:
         run: |
           set -e
 
+          EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+
           # Get the IPs from the previous step
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
 
@@ -208,12 +224,13 @@ jobs:
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
             echo "Deploying to: $EC2_IP"
             echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+            TARGET_HOST="${EC2_USER_VALUE}@${EC2_IP}"
 
             # SSH into instance and deploy
             if ssh -T -i ~/.ssh/deploy_key.pem \
               -o StrictHostKeyChecking=no \
               -o ConnectTimeout=10 \
-              ${{ secrets.EC2_USER }}@$EC2_IP \
+              "$TARGET_HOST" \
               "sudo docker pull ${{ secrets.DOCKERHUB_USERNAME }}/load-balancer-app:latest; \
                sudo docker stop load-balancer-app || true; \
                sudo docker rm load-balancer-app || true; \
