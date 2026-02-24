@@ -359,6 +359,12 @@ jobs:
         run: |
           set -e
 
+          EC2_USER_VALUE="${{ secrets.EC2_USER }}"
+          if [ -z "$EC2_USER_VALUE" ]; then
+            EC2_USER_VALUE="ec2-user"
+            echo "::warning::EC2_USER secret missing; defaulting to ec2-user."
+          fi
+
           INSTANCES="${{ steps.get_instances.outputs.instance_ips }}"
           IP_ARRAY=()
           for ip in $INSTANCES; do
@@ -379,8 +385,20 @@ jobs:
             echo ""
             echo "Server: $EC2_IP"
             echo "---"
-            curl -s http://$EC2_IP/ | jq '.' 2>/dev/null || \
-              curl -s http://$EC2_IP/
+            TARGET_HOST="${EC2_USER_VALUE}@${EC2_IP}"
+
+            # Verify from inside the instance to avoid public network timeout noise
+            RESPONSE=$(ssh -T -i ~/.ssh/deploy_key.pem \
+              -o StrictHostKeyChecking=no \
+              -o ConnectTimeout=10 \
+              "$TARGET_HOST" \
+              "curl -sS --max-time 10 http://localhost/ || true")
+
+            if [ -n "$RESPONSE" ]; then
+              echo "$RESPONSE" | jq '.' 2>/dev/null || echo "$RESPONSE"
+            else
+              echo "(No response body returned)"
+            fi
 
             echo ""
           done
